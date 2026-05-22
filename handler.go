@@ -33,7 +33,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[chat→resp] model=%s stream=%v messages=%d", chatReq.Model, chatReq.Stream, len(chatReq.Messages))
+	publicModel := chatReq.Model
+	chatReq.Model = mapModelToUpstream(publicModel)
+	log.Printf("[chat→resp] model=%s upstream_model=%s stream=%v messages=%d", publicModel, chatReq.Model, chatReq.Stream, len(chatReq.Messages))
 
 	respBody, err := ConvertChatToResponsesRequest(&chatReq)
 	if err != nil {
@@ -46,13 +48,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	upstreamURL := cfg.ResponsesAPIBaseURL + "/v1/responses"
 
 	if chatReq.Stream {
-		handleChatStreamViaResponses(w, upstreamURL, apiKey, respBody, chatReq.Model)
+		handleChatStreamViaResponses(w, upstreamURL, apiKey, respBody, publicModel)
 	} else {
-		handleChatNonStream(w, upstreamURL, apiKey, respBody)
+		handleChatNonStream(w, upstreamURL, apiKey, respBody, publicModel)
 	}
 }
 
-func handleChatNonStream(w http.ResponseWriter, url, apiKey string, reqBody []byte) {
+func handleChatNonStream(w http.ResponseWriter, url, apiKey string, reqBody []byte, publicModel string) {
 	resp, err := doUpstreamRequest(url, apiKey, reqBody)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream error: "+err.Error())
@@ -85,6 +87,7 @@ func handleChatNonStream(w http.ResponseWriter, url, apiKey string, reqBody []by
 		writeError(w, http.StatusInternalServerError, "conversion error: "+err.Error())
 		return
 	}
+	chatResp.Model = publicModel
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatResp)
@@ -299,7 +302,9 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[resp→chat] model=%s stream=%v", respReq.Model, respReq.Stream)
+	publicModel := respReq.Model
+	respReq.Model = mapModelToUpstream(publicModel)
+	log.Printf("[resp→chat] model=%s upstream_model=%s stream=%v", publicModel, respReq.Model, respReq.Stream)
 
 	chatBody, err := ConvertResponsesToChatRequest(&respReq)
 	if err != nil {
@@ -312,13 +317,13 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	upstreamURL := cfg.CompletionsAPIBaseURL + "/v1/chat/completions"
 
 	if respReq.Stream {
-		handleResponsesStreamViaChat(w, upstreamURL, apiKey, chatBody, respReq.Model)
+		handleResponsesStreamViaChat(w, upstreamURL, apiKey, chatBody, publicModel)
 	} else {
-		handleResponsesNonStream(w, upstreamURL, apiKey, chatBody)
+		handleResponsesNonStream(w, upstreamURL, apiKey, chatBody, publicModel)
 	}
 }
 
-func handleResponsesNonStream(w http.ResponseWriter, url, apiKey string, reqBody []byte) {
+func handleResponsesNonStream(w http.ResponseWriter, url, apiKey string, reqBody []byte, publicModel string) {
 	resp, err := doUpstreamRequest(url, apiKey, reqBody)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream error: "+err.Error())
@@ -350,6 +355,7 @@ func handleResponsesNonStream(w http.ResponseWriter, url, apiKey string, reqBody
 		writeError(w, http.StatusInternalServerError, "conversion error: "+err.Error())
 		return
 	}
+	responsesResp.Model = publicModel
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(responsesResp)
@@ -666,6 +672,93 @@ func handleResponsesStreamViaChat(w http.ResponseWriter, url, apiKey string, req
 
 // ==================== Pass-through ====================
 
+func handleModels(w http.ResponseWriter, r *http.Request) {
+	apiKey := extractAPIKey(r)
+	if apiKey == "" {
+		apiKey = cfg.ResponsesAPIKey
+	}
+
+	upstreamURL := cfg.ResponsesAPIBaseURL + r.URL.Path
+	if r.URL.RawQuery != "" {
+		upstreamURL += "?" + r.URL.RawQuery
+	}
+
+	req, err := http.NewRequest(r.Method, upstreamURL, nil)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to create request")
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "upstream error: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to read upstream response")
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK || len(cfg.ModelMap) == 0 {
+		for k, v := range resp.Header {
+			for _, vv := range v {
+				w.Header().Add(k, vv)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
+		return
+	}
+
+	var modelsResp struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &modelsResp); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
+		return
+	}
+
+	existing := make(map[string]bool, len(modelsResp.Data))
+	ownedByByID := make(map[string]string, len(modelsResp.Data))
+	for _, model := range modelsResp.Data {
+		existing[model.ID] = true
+		ownedByByID[model.ID] = model.OwnedBy
+	}
+
+	for publicName, upstreamName := range cfg.ModelMap {
+		if existing[publicName] {
+			continue
+		}
+		ownedBy := ownedByByID[upstreamName]
+		if ownedBy == "" {
+			ownedBy = "mapped"
+		}
+		modelsResp.Data = append(modelsResp.Data, struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			OwnedBy string `json:"owned_by"`
+		}{
+			ID:      publicName,
+			Object:  "model",
+			OwnedBy: ownedBy,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(modelsResp)
+}
+
 func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	apiKey := extractAPIKey(r)
 	if apiKey == "" {
@@ -735,6 +828,13 @@ func extractAPIKey(r *http.Request) string {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
 	return ""
+}
+
+func mapModelToUpstream(publicModel string) string {
+	if upstreamModel, ok := cfg.ModelMap[publicModel]; ok {
+		return upstreamModel
+	}
+	return publicModel
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

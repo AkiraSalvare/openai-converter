@@ -18,21 +18,27 @@ type Config struct {
 	CompletionsAPIBaseURL string
 	CompletionsAPIKey     string
 
-	Host string
-	Port int
+	ModelMap map[string]string
+	Host     string
+	Port     int
 }
 
 var cfg Config
 
 func loadConfig() {
+	var modelMapSpec string
+
 	// Command line flags (override env vars)
 	flag.StringVar(&cfg.ResponsesAPIBaseURL, "responses-url", envOrDefault("RESPONSES_API_BASE_URL", "https://codex.viloze.com"), "Upstream Responses API base URL")
 	flag.StringVar(&cfg.ResponsesAPIKey, "responses-key", envOrDefault("RESPONSES_API_KEY", ""), "Upstream Responses API key")
 	flag.StringVar(&cfg.CompletionsAPIBaseURL, "completions-url", envOrDefault("COMPLETIONS_API_BASE_URL", "https://api.openai.com"), "Upstream Chat Completions API base URL")
 	flag.StringVar(&cfg.CompletionsAPIKey, "completions-key", envOrDefault("COMPLETIONS_API_KEY", ""), "Upstream Chat Completions API key")
+	flag.StringVar(&modelMapSpec, "model-map", envOrDefault("MODEL_MAP", ""), "Comma-separated public=upstream model mappings")
 	flag.StringVar(&cfg.Host, "host", envOrDefault("HOST", "0.0.0.0"), "Server host")
 	flag.IntVar(&cfg.Port, "port", envIntOrDefault("PORT", 9090), "Server port")
 	flag.Parse()
+
+	cfg.ModelMap = parseModelMap(modelMapSpec)
 }
 
 func envOrDefault(key, def string) string {
@@ -53,6 +59,31 @@ func envIntOrDefault(key string, def int) int {
 	return def
 }
 
+func parseModelMap(spec string) map[string]string {
+	result := make(map[string]string)
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			log.Printf("[config] ignoring invalid model map entry %q, expected public=upstream", entry)
+			continue
+		}
+
+		publicName := strings.TrimSpace(parts[0])
+		upstreamName := strings.TrimSpace(parts[1])
+		if publicName == "" || upstreamName == "" {
+			log.Printf("[config] ignoring invalid model map entry %q, both names are required", entry)
+			continue
+		}
+		result[publicName] = upstreamName
+	}
+	return result
+}
+
 func main() {
 	// Load .env file if present
 	loadDotEnv(".env")
@@ -67,7 +98,7 @@ func main() {
 	mux.HandleFunc("/v1/responses", handleResponses)
 
 	// Pass-through for models and other endpoints
-	mux.HandleFunc("/v1/models", handlePassthrough)
+	mux.HandleFunc("/v1/models", handleModels)
 
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

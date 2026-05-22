@@ -118,8 +118,21 @@ docker run -d --name openai-converter \
 | `RESPONSES_API_KEY` | 上游 Responses API 密钥 | — |
 | `COMPLETIONS_API_BASE_URL` | 上游 Chat Completions API 地址（方向2的目标） | `https://api.openai.com` |
 | `COMPLETIONS_API_KEY` | 上游 Chat Completions API 密钥 | — |
+| `MODEL_MAP` | 模型名称映射，格式为 `客户端模型名=上游模型名`，多个用逗号分隔 | — |
 | `HOST` | 监听地址 | `0.0.0.0` |
 | `PORT` | 监听端口 | `9090` |
+
+模型映射示例：
+
+```bash
+# 客户端请求 proxy-gpt-5.5，代理实际转发给上游 gpt-5.5
+MODEL_MAP=proxy-gpt-5.5=gpt-5.5
+
+# 多个映射
+MODEL_MAP=proxy-gpt-5.5=gpt-5.5,my-coder=gpt-5.3-codex
+```
+
+映射后的客户端模型名也会出现在 `/v1/models` 返回值中，响应里的 `model` 字段会保持客户端请求使用的名称。
 
 也支持命令行参数：
 
@@ -129,6 +142,7 @@ docker run -d --name openai-converter \
   -responses-key sk-xxx \
   -completions-url https://api.openai.com \
   -completions-key sk-yyy \
+  -model-map proxy-gpt-5.5=gpt-5.5 \
   -host 0.0.0.0 \
   -port 8080
 ```
@@ -508,7 +522,7 @@ curl http://localhost:9090/v1/responses \
 
 | Chat Completions | Responses API | 说明 |
 |---|---|---|
-| `model` | `model` | 直接映射 |
+| `model` | `model` | 支持通过 `MODEL_MAP` 映射到上游模型名 |
 | `messages` | `input` | 消息格式互转 |
 | `messages[role=system]` | `instructions` | 系统提示词 |
 | `messages[role=developer]` | `instructions` | 开发者消息 → 指令 |
