@@ -11,3 +11,5 @@ openai-converter
 # OS
 .DS_Store
 .history/
+
+.claude/

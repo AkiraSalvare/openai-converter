@@ -1,6 +1,8 @@
 # OpenAI API Converter Proxy
 
-一个纯 Go 实现的**双向转换代理**，在 OpenAI **Responses API** 和 **Chat Completions API** 之间进行实时协议转换——支持流式和非流式两种模式。
+原项目：[Viloze/OpenAI_Converter](https://gitlab.com/viloze/open-ai-converter)
+
+一个纯 Go 实现的**双向转换代理**，在 OpenAI **Responses API** 和 **Chat Completions API** 之间进行实时协议转换——支持流式和非流式两种模式。本项目在源项目基础上实现了 Model ID 的映射，解决了 Cursor 无法正确调用模型的问题。
 
 ```
 ┌──────────────────┐         ┌─────────────────────┐         ┌──────────────────────┐
@@ -60,7 +62,7 @@ go build -o openai-converter .
 
 ```bash
 # 克隆项目
-git clone https://gitlab.com/viloze/open-ai-converter.git
+git clone https://github.com/AkiraSalvare/openai-converter
 cd OPENAI_CONVERTER
 
 # 配置环境变量
@@ -103,6 +105,7 @@ docker run -d --name openai-converter \
   -e RESPONSES_API_KEY=sk-xxx \
   -e COMPLETIONS_API_BASE_URL=https://api.openai.com \
   -e COMPLETIONS_API_KEY=sk-yyy \
+  -e MODEL_MAP=proxy-xx=xx \
   registry.gitlab.com/viloze/open-ai-converter:latest
 ```
 
@@ -112,15 +115,15 @@ docker run -d --name openai-converter \
 
 通过 `.env` 文件或环境变量配置（环境变量优先）：
 
-| 变量名 | 说明 | 默认值 |
-|---|---|---|
-| `RESPONSES_API_BASE_URL` | 上游 Responses API 地址（方向1的目标） | `https://api.openai.com` |
-| `RESPONSES_API_KEY` | 上游 Responses API 密钥 | — |
-| `COMPLETIONS_API_BASE_URL` | 上游 Chat Completions API 地址（方向2的目标） | `https://api.openai.com` |
-| `COMPLETIONS_API_KEY` | 上游 Chat Completions API 密钥 | — |
-| `MODEL_MAP` | 模型名称映射，格式为 `客户端模型名=上游模型名`，多个用逗号分隔 | — |
-| `HOST` | 监听地址 | `0.0.0.0` |
-| `PORT` | 监听端口 | `9090` |
+| 变量名                       | 说明                                                             | 默认值                     |
+| ---------------------------- | ---------------------------------------------------------------- | -------------------------- |
+| `RESPONSES_API_BASE_URL`   | 上游 Responses API 地址（方向1的目标）                           | `https://api.openai.com` |
+| `RESPONSES_API_KEY`        | 上游 Responses API 密钥                                          | —                         |
+| `COMPLETIONS_API_BASE_URL` | 上游 Chat Completions API 地址（方向2的目标）                    | `https://api.openai.com` |
+| `COMPLETIONS_API_KEY`      | 上游 Chat Completions API 密钥                                   | —                         |
+| `MODEL_MAP`                | 模型名称映射，格式为 `客户端模型名=上游模型名`，多个用逗号分隔 | —                         |
+| `HOST`                     | 监听地址                                                         | `0.0.0.0`                |
+| `PORT`                     | 监听端口                                                         | `9090`                   |
 
 模型映射示例：
 
@@ -149,14 +152,14 @@ MODEL_MAP=proxy-gpt-5.5=gpt-5.5,my-coder=gpt-5.3-codex
 
 ## API 端点
 
-| 端点 | 方法 | 说明 |
-|---|---|---|
+| 端点                     | 方法 | 说明                                                      |
+| ------------------------ | ---- | --------------------------------------------------------- |
 | `/v1/chat/completions` | POST | 接收 Chat Completions 请求，转换为 Responses API 调用上游 |
-| `/v1/responses` | POST | 接收 Responses 请求，转换为 Chat Completions API 调用上游 |
-| `/v1/models` | GET | 透传到上游 Responses API |
-| `/v1/*` | * | 其他 `/v1/` 路径透传到上游 |
-| `/health` | GET | 健康检查，返回 `{"status":"ok"}` |
-| `/` | GET | 服务信息 |
+| `/v1/responses`        | POST | 接收 Responses 请求，转换为 Chat Completions API 调用上游 |
+| `/v1/models`           | GET  | 透传到上游 Responses API                                  |
+| `/v1/*`                | *    | 其他 `/v1/` 路径透传到上游                              |
+| `/health`              | GET  | 健康检查，返回 `{"status":"ok"}`                        |
+| `/`                    | GET  | 服务信息                                                  |
 
 ## 使用示例
 
@@ -520,72 +523,72 @@ curl http://localhost:9090/v1/responses \
 
 ### 请求参数
 
-| Chat Completions | Responses API | 说明 |
-|---|---|---|
-| `model` | `model` | 支持通过 `MODEL_MAP` 映射到上游模型名 |
-| `messages` | `input` | 消息格式互转 |
-| `messages[role=system]` | `instructions` | 系统提示词 |
-| `messages[role=developer]` | `instructions` | 开发者消息 → 指令 |
-| `stream` | `stream` | 直接映射 |
-| `max_tokens` | `max_output_tokens` | 名称映射 |
-| `max_completion_tokens` | `max_output_tokens` | 优先使用（更新的字段） |
-| `temperature` | `temperature` | 直接映射 |
-| `top_p` | `top_p` | 直接映射 |
-| `frequency_penalty` | `frequency_penalty` | 直接映射 |
-| `presence_penalty` | `presence_penalty` | 直接映射 |
-| `tools` | `tools` | 工具格式互转 |
-| `tool_choice` | `tool_choice` | 直接透传 |
-| `parallel_tool_calls` | `parallel_tool_calls` | 直接透传 |
-| `stop` | `stop` | 透传（部分实现支持） |
-| `seed` | `seed` | 透传（部分实现支持） |
-| `n` | — | ⚠️ Responses API 不支持 |
-| `user` | `user` | 直接映射 |
-| `response_format` | `text.format` | 结构化输出互转 |
-| `logprobs` + `top_logprobs` | `top_logprobs` | 合并映射 |
-| `reasoning_effort` | `reasoning.effort` | 推理控制互转 |
-| `service_tier` | `service_tier` | 直接透传 |
-| `store` | `store` | 直接透传 |
-| `metadata` | `metadata` | 直接透传 |
-| `stream_options` | — | 方向2自动注入 `include_usage: true` |
+| Chat Completions                | Responses API           | 说明                                    |
+| ------------------------------- | ----------------------- | --------------------------------------- |
+| `model`                       | `model`               | 支持通过 `MODEL_MAP` 映射到上游模型名 |
+| `messages`                    | `input`               | 消息格式互转                            |
+| `messages[role=system]`       | `instructions`        | 系统提示词                              |
+| `messages[role=developer]`    | `instructions`        | 开发者消息 → 指令                      |
+| `stream`                      | `stream`              | 直接映射                                |
+| `max_tokens`                  | `max_output_tokens`   | 名称映射                                |
+| `max_completion_tokens`       | `max_output_tokens`   | 优先使用（更新的字段）                  |
+| `temperature`                 | `temperature`         | 直接映射                                |
+| `top_p`                       | `top_p`               | 直接映射                                |
+| `frequency_penalty`           | `frequency_penalty`   | 直接映射                                |
+| `presence_penalty`            | `presence_penalty`    | 直接映射                                |
+| `tools`                       | `tools`               | 工具格式互转                            |
+| `tool_choice`                 | `tool_choice`         | 直接透传                                |
+| `parallel_tool_calls`         | `parallel_tool_calls` | 直接透传                                |
+| `stop`                        | `stop`                | 透传（部分实现支持）                    |
+| `seed`                        | `seed`                | 透传（部分实现支持）                    |
+| `n`                           | —                      | ⚠️ Responses API 不支持               |
+| `user`                        | `user`                | 直接映射                                |
+| `response_format`             | `text.format`         | 结构化输出互转                          |
+| `logprobs` + `top_logprobs` | `top_logprobs`        | 合并映射                                |
+| `reasoning_effort`            | `reasoning.effort`    | 推理控制互转                            |
+| `service_tier`                | `service_tier`        | 直接透传                                |
+| `store`                       | `store`               | 直接透传                                |
+| `metadata`                    | `metadata`            | 直接透传                                |
+| `stream_options`              | —                      | 方向2自动注入 `include_usage: true`   |
 
 ### 响应参数
 
-| Chat Completions | Responses API | 说明 |
-|---|---|---|
-| `id` (chatcmpl-) | `id` (resp_) | 前缀自动转换 |
-| `choices[0].message.content` | `output[0].content[0].text` | 文本内容映射 |
-| `choices[0].message.tool_calls` | `output[].type=function_call` | 工具调用映射 |
-| `choices[0].message.refusal` | `output[0].content[0].type=refusal` | 拒绝内容映射 |
-| `choices[0].finish_reason=stop` | `status=completed` | 完成状态 |
-| `choices[0].finish_reason=length` | `status=incomplete` | 截断状态 |
-| `choices[0].finish_reason=tool_calls` | 含 `function_call` 输出 | 工具调用状态 |
-| `usage.prompt_tokens` | `usage.input_tokens` | 名称映射 |
-| `usage.completion_tokens` | `usage.output_tokens` | 名称映射 |
+| Chat Completions                                     | Responses API                                    | 说明            |
+| ---------------------------------------------------- | ------------------------------------------------ | --------------- |
+| `id` (chatcmpl-)                                   | `id` (resp_)                                   | 前缀自动转换    |
+| `choices[0].message.content`                       | `output[0].content[0].text`                    | 文本内容映射    |
+| `choices[0].message.tool_calls`                    | `output[].type=function_call`                  | 工具调用映射    |
+| `choices[0].message.refusal`                       | `output[0].content[0].type=refusal`            | 拒绝内容映射    |
+| `choices[0].finish_reason=stop`                    | `status=completed`                             | 完成状态        |
+| `choices[0].finish_reason=length`                  | `status=incomplete`                            | 截断状态        |
+| `choices[0].finish_reason=tool_calls`              | 含 `function_call` 输出                        | 工具调用状态    |
+| `usage.prompt_tokens`                              | `usage.input_tokens`                           | 名称映射        |
+| `usage.completion_tokens`                          | `usage.output_tokens`                          | 名称映射        |
 | `usage.completion_tokens_details.reasoning_tokens` | `usage.output_tokens_details.reasoning_tokens` | 推理 token 明细 |
-| `usage.prompt_tokens_details.cached_tokens` | `usage.input_tokens_details.cached_tokens` | 缓存 token 明细 |
-| `service_tier` | `service_tier` | 直接透传 |
+| `usage.prompt_tokens_details.cached_tokens`        | `usage.input_tokens_details.cached_tokens`     | 缓存 token 明细 |
+| `service_tier`                                     | `service_tier`                                 | 直接透传        |
 
 ### 流式事件映射
 
 #### 方向1：Responses SSE → Chat Completions SSE
 
-| Responses 事件 | Chat Completions chunk |
-|---|---|
-| `response.output_text.delta` | `delta.content` |
-| `response.refusal.delta` | `delta.refusal` |
-| `response.function_call_arguments.delta` | `delta.tool_calls[].function.arguments` |
-| `response.output_item.added` (function_call) | tool_call 初始化（id, name） |
-| `response.completed` | `finish_reason` + `usage` + `[DONE]` |
+| Responses 事件                                 | Chat Completions chunk                     |
+| ---------------------------------------------- | ------------------------------------------ |
+| `response.output_text.delta`                 | `delta.content`                          |
+| `response.refusal.delta`                     | `delta.refusal`                          |
+| `response.function_call_arguments.delta`     | `delta.tool_calls[].function.arguments`  |
+| `response.output_item.added` (function_call) | tool_call 初始化（id, name）               |
+| `response.completed`                         | `finish_reason` + `usage` + `[DONE]` |
 
 #### 方向2：Chat Completions SSE → Responses SSE
 
-| Chat Completions chunk | Responses 事件 |
-|---|---|
-| 首个 chunk | `response.created` + `response.in_progress` + `response.output_item.added` + `response.content_part.added` |
-| `delta.content` | `response.output_text.delta` |
-| `delta.refusal` | `response.refusal.delta` |
-| `delta.tool_calls` (初始) | `response.output_item.added` (function_call) |
-| `delta.tool_calls` (后续) | `response.function_call_arguments.delta` |
+| Chat Completions chunk         | Responses 事件                                                                                                          |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 首个 chunk                     | `response.created` + `response.in_progress` + `response.output_item.added` + `response.content_part.added`      |
+| `delta.content`              | `response.output_text.delta`                                                                                          |
+| `delta.refusal`              | `response.refusal.delta`                                                                                              |
+| `delta.tool_calls` (初始)    | `response.output_item.added` (function_call)                                                                          |
+| `delta.tool_calls` (后续)    | `response.function_call_arguments.delta`                                                                              |
 | `finish_reason` / `[DONE]` | `response.output_text.done` + `response.content_part.done` + `response.output_item.done` + `response.completed` |
 
 ## 消息格式转换
@@ -614,19 +617,19 @@ instructions        →  { role: "system", content: ... }
 
 以下功能由于两个 API 之间架构差异过大，暂无法转换：
 
-| 功能 | 原因 |
-|---|---|
-| `n > 1`（多选项） | Responses API 不支持一次生成多个候选 |
-| `web_search` 工具 | Chat Completions 无对应工具类型（静默跳过） |
-| `file_search` 工具 | Chat Completions 无对应工具类型（静默跳过） |
+| 功能                      | 原因                                        |
+| ------------------------- | ------------------------------------------- |
+| `n > 1`（多选项）       | Responses API 不支持一次生成多个候选        |
+| `web_search` 工具       | Chat Completions 无对应工具类型（静默跳过） |
+| `file_search` 工具      | Chat Completions 无对应工具类型（静默跳过） |
 | `code_interpreter` 工具 | Chat Completions 无对应工具类型（静默跳过） |
-| `computer_use` 工具 | Chat Completions 无对应工具类型（静默跳过） |
-| `previous_response_id` | Chat Completions 无会话链概念 |
-| `truncation` | Chat Completions 无自动截断策略 |
-| `logprobs` 详细值 | 两个 API 的 logprobs 结构不同，仅映射数量 |
-| `reasoning.summary` | Chat Completions 无 reasoning summary 支持 |
-| `modalities` (audio) | 两个 API 的音频处理方式不同 |
-| `prediction` | Chat Completions 独有功能 |
+| `computer_use` 工具     | Chat Completions 无对应工具类型（静默跳过） |
+| `previous_response_id`  | Chat Completions 无会话链概念               |
+| `truncation`            | Chat Completions 无自动截断策略             |
+| `logprobs` 详细值       | 两个 API 的 logprobs 结构不同，仅映射数量   |
+| `reasoning.summary`     | Chat Completions 无 reasoning summary 支持  |
+| `modalities` (audio)    | 两个 API 的音频处理方式不同                 |
+| `prediction`            | Chat Completions 独有功能                   |
 
 ## 项目结构
 
@@ -647,12 +650,12 @@ OPENAI_CONVERTER/
 
 ### 源码说明
 
-| 文件 | 行数 | 职责 |
-|---|---|---|
-| `main.go` | ~170 | HTTP 服务器启动、路由注册、CORS/日志中间件、`.env` 加载 |
-| `types.go` | ~350 | 两个 API 的完整类型定义、流式事件类型、辅助函数 |
+| 文件           | 行数 | 职责                                                                       |
+| -------------- | ---- | -------------------------------------------------------------------------- |
+| `main.go`    | ~170 | HTTP 服务器启动、路由注册、CORS/日志中间件、`.env` 加载                  |
+| `types.go`   | ~350 | 两个 API 的完整类型定义、流式事件类型、辅助函数                            |
 | `convert.go` | ~780 | 请求/响应双向转换、Vision 图片转换、Structured Output 映射、Reasoning 映射 |
-| `handler.go` | ~780 | HTTP handler、非流式处理、双向流式 SSE 事件转换、上游请求 |
+| `handler.go` | ~780 | HTTP handler、非流式处理、双向流式 SSE 事件转换、上游请求                  |
 
 ## API Key 处理
 
@@ -662,6 +665,7 @@ OPENAI_CONVERTER/
 - **方向2** (`/v1/responses`)：使用客户端提供的 key 或 fallback 到 `COMPLETIONS_API_KEY`
 
 这使得代理可以：
+
 1. 作为透明代理，让客户端使用自己的 key
 2. 作为网关，使用统一的 key 对外提供服务
 
